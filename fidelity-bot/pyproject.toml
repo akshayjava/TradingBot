@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fidelity-portfolio-bot"
+version = "0.1.0"
+description = "AI-powered Fidelity portfolio intelligence bot using Plaid + Claude"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.40.0",
+    "plaid-python>=20.0.0",
+    "click>=8.1.7",
+    "python-dotenv>=1.0.0",
+    "APScheduler>=3.10.4",
+    "slack-sdk>=3.27.1",
+    "resend>=0.8.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+portfolio-bot = "src.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
