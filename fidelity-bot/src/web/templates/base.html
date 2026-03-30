@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Portfolio Bot{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.slate.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-icon">📈</span>
+      <span class="brand-name">Portfolio Bot</span>
+    </div>
+    <ul class="nav-list">
+      <li>
+        <a href="/" class="nav-link {% if active == 'dashboard' %}active{% endif %}">
+          <span class="nav-icon">📊</span> Dashboard
+        </a>
+      </li>
+      <li>
+        <a href="/research" class="nav-link {% if active == 'research' %}active{% endif %}">
+          <span class="nav-icon">🔬</span> Research
+        </a>
+      </li>
+      <li>
+        <a href="/optimize" class="nav-link {% if active == 'optimize' %}active{% endif %}">
+          <span class="nav-icon">⚖️</span> Optimize
+        </a>
+      </li>
+      <li>
+        <a href="/alerts" class="nav-link {% if active == 'alerts' %}active{% endif %}">
+          <span class="nav-icon">🔔</span> Alerts
+        </a>
+      </li>
+      <li>
+        <a href="/settings" class="nav-link {% if active == 'settings' %}active{% endif %}">
+          <span class="nav-icon">⚙️</span> Settings
+        </a>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <small>Powered by Claude Opus 4.6</small>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <div class="main-wrapper">
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+</div>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

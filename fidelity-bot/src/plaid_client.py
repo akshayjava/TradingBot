@@ -110,6 +110,21 @@ class PlaidClient:
         except Exception:
             return institution_id
 
+    # ── Token Exchange (for Plaid Link OAuth flow) ────────────────────────────
+
+    def exchange_public_token(self, public_token: str) -> str:
+        """Exchange a short-lived public_token for a permanent access_token.
+
+        Used by the web Setup Wizard after the user completes the Plaid Link
+        browser flow.  Returns the access_token string to be stored in .env.
+        """
+        from plaid.model.item_public_token_exchange_request import (
+            ItemPublicTokenExchangeRequest,
+        )
+        request = ItemPublicTokenExchangeRequest(public_token=public_token)
+        response = self._client.item_public_token_exchange(request)
+        return response["access_token"]
+
     # ── Convenience: all tokens ───────────────────────────────────────────────
 
     def get_all_holdings(self) -> list[dict]:

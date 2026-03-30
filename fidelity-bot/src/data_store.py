@@ -27,6 +27,8 @@ class _DecimalEncoder(json.JSONEncoder):
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 _DDL = """
+PRAGMA journal_mode=WAL;
+
 CREATE TABLE IF NOT EXISTS snapshots (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     fetched_at  TEXT    NOT NULL,
@@ -57,8 +59,19 @@ CREATE TABLE IF NOT EXISTS alerts_log (
     delivered   INTEGER NOT NULL DEFAULT 0   -- bitmask: 1=slack 2=email
 );
 
+CREATE TABLE IF NOT EXISTS research_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_at        TEXT    NOT NULL,
+    tickers_researched  TEXT    NOT NULL,   -- JSON array of ticker strings
+    report_json         TEXT    NOT NULL,   -- serialised ResearchReport fields
+    report_md           TEXT    NOT NULL,   -- pre-rendered markdown
+    total_input_tokens  INTEGER NOT NULL DEFAULT 0,
+    total_output_tokens INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_snapshots_fetched ON snapshots(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_holdings_ticker   ON holdings_history(ticker, fetched_at);
+CREATE INDEX IF NOT EXISTS idx_research_generated ON research_log(generated_at);
 """
 
 
@@ -199,6 +212,45 @@ class DataStore:
                 (datetime.utcnow().isoformat(), alert_type, ticker, message, delivered),
             )
             return cursor.lastrowid
+
+    # ── Research Log ───────────────────────────────────────────────────────────
+
+    def save_research_report(
+        self,
+        generated_at: str,
+        tickers: list[str],
+        report_json: dict,
+        report_md: str,
+        total_input_tokens: int,
+        total_output_tokens: int,
+    ) -> int:
+        with self._conn() as conn:
+            cursor = conn.execute(
+                """INSERT INTO research_log
+                   (generated_at, tickers_researched, report_json, report_md,
+                    total_input_tokens, total_output_tokens)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    generated_at,
+                    json.dumps(tickers),
+                    json.dumps(report_json, cls=_DecimalEncoder),
+                    report_md,
+                    total_input_tokens,
+                    total_output_tokens,
+                ),
+            )
+            return cursor.lastrowid
+
+    def get_latest_research_report(self) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM research_log ORDER BY generated_at DESC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return None
+        r = dict(row)
+        r["tickers_researched"] = json.loads(r["tickers_researched"])
+        return r
 
     def get_recent_alerts(self, limit: int = 20) -> list[dict]:
         with self._conn() as conn:

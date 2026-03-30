@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Optimize{% endblock %}
+
+{% block content %}
+<div x-data="optimiserApp()" x-init="init()">
+
+  <div class="page-header">
+    <div>
+      <h2>Gains Optimiser</h2>
+      <small class="muted">Kelly criterion + momentum · objective: maximise returns</small>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <article class="controls-card">
+    <div class="controls-grid">
+      <label>
+        Max position: <strong x-text="(maxPos*100).toFixed(0) + '%'"></strong>
+        <input type="range" min="5" max="50" step="5" x-model.number="maxPosPct">
+      </label>
+      <label>
+        Kelly fraction: <strong x-text="(kellyFrac*100).toFixed(0) + '%'"></strong>
+        <input type="range" min="10" max="100" step="10" x-model.number="kellyPct">
+      </label>
+      <label class="toggle-row">
+        <input type="checkbox" role="switch" x-model="useResearch">
+        Use latest research signals
+      </label>
+    </div>
+    <button @click="run()" :disabled="running" class="btn-primary" style="margin-top:0.75rem">
+      <span x-show="!running">▶ Run Optimiser</span>
+      <span x-show="running">Calculating…</span>
+    </button>
+  </article>
+
+  <!-- Error -->
+  <div x-show="errorMsg" class="toast toast-error" x-text="errorMsg"></div>
+
+  <!-- Results -->
+  <div x-show="result">
+
+    <!-- Summary KPIs -->
+    <div class="kpi-strip" x-show="result">
+      <div class="kpi-card">
+        <div class="kpi-label">Portfolio Value</div>
+        <div class="kpi-value" x-text="'$' + (result?.total_value || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})"></div>
+      </div>
+      <div class="kpi-card" :class="(result?.expected_gain_pct||0) >= 0 ? 'kpi-positive' : 'kpi-negative'">
+        <div class="kpi-label">Expected Gain / period</div>
+        <div class="kpi-value" x-text="(result?.expected_gain_pct > 0 ? '+' : '') + (result?.expected_gain_pct || 0).toFixed(3) + '%'"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Rebalancing Moves</div>
+        <div class="kpi-value" x-text="result?.actions?.length || 0"></div>
+      </div>
+    </div>
+
+    <!-- Data quality warning -->
+    <div x-show="result?.data_quality_note" class="callout-warning" x-text="result?.data_quality_note"></div>
+
+    <!-- Rebalancing table -->
+    <section x-show="result?.actions?.length > 0">
+      <h3>Rebalancing Actions</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Ticker</th><th>Action</th>
+              <th class="num">Current</th><th class="num">Target</th>
+              <th class="num">Δ %</th><th class="num">Δ $</th><th>Priority</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="(a, i) in result.actions" :key="a.ticker">
+              <tr>
+                <td x-text="i+1" class="muted"></td>
+                <td><strong x-text="a.ticker"></strong></td>
+                <td><span class="badge" :class="actionClass(a.action)" x-text="a.action.toUpperCase().replace('_',' ')"></span></td>
+                <td class="num" x-text="a.current_pct.toFixed(1) + '%'"></td>
+                <td class="num" x-text="a.target_pct.toFixed(1) + '%'"></td>
+                <td class="num" :class="a.delta_pct >= 0 ? 'positive' : 'negative'"
+                    x-text="(a.delta_pct >= 0 ? '+' : '') + a.delta_pct.toFixed(1) + '%'"></td>
+                <td class="num" :class="a.delta_dollars >= 0 ? 'positive' : 'negative'"
+                    x-text="'$' + a.delta_dollars.toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0, signDisplay:'always'})"></td>
+                <td><span class="badge" :class="'priority-' + a.priority" x-text="a.priority"></span></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <div x-show="result && result.actions && result.actions.length === 0" class="callout-success">
+      Portfolio is already optimally weighted — no significant rebalancing needed.
+    </div>
+
+    <!-- Ticker stats -->
+    <section x-show="result?.stats?.length > 0">
+      <h3>Ticker Analysis</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th class="num">Adj. Return</th>
+              <th class="num">Volatility</th>
+              <th class="num">Momentum</th>
+              <th class="num">Kelly w%</th>
+              <th>Research Signal</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="s in result.stats" :key="s.ticker">
+              <tr>
+                <td><strong x-text="s.ticker"></strong></td>
+                <td class="num" :class="s.adj_return >= 0 ? 'positive' : 'negative'"
+                    x-text="(s.adj_return >= 0 ? '+' : '') + s.adj_return.toFixed(3) + '%'"></td>
+                <td class="num" x-text="s.volatility.toFixed(2) + '%'"></td>
+                <td class="num" x-text="s.momentum.toFixed(2) + 'x'"></td>
+                <td class="num" x-text="s.kelly_pct.toFixed(1) + '%'"></td>
+                <td><span class="badge" :class="signalClass(s.signal)" x-text="s.signal.replace('_',' ').toUpperCase()"></span></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div><!-- /result -->
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+<script>
+function optimiserApp() {
+  return {
+    maxPosPct: 30,
+    kellyPct: 50,
+    useResearch: false,
+    running: false,
+    errorMsg: '',
+    result: null,
+    get maxPos() { return this.maxPosPct / 100; },
+    get kellyFrac() { return this.kellyPct / 100; },
+    init() {},
+    async run() {
+      this.running = true;
+      this.errorMsg = '';
+      this.result = null;
+      try {
+        const params = new URLSearchParams({
+          max_position: this.maxPos,
+          kelly_fraction: this.kellyFrac,
+          use_research: this.useResearch,
+        });
+        const r = await fetch('/api/optimize?' + params, { method: 'POST' });
+        const data = await r.json();
+        if (data.error) { this.errorMsg = data.error; }
+        else { this.result = data; }
+      } catch(e) {
+        this.errorMsg = 'Request failed: ' + e;
+      } finally {
+        this.running = false;
+      }
+    },
+    actionClass(action) {
+      return { 'badge-success': action==='buy_more', 'badge-danger': action==='sell', 'badge-warning': action==='trim', 'badge-secondary': action==='hold' };
+    },
+    signalClass(signal) {
+      return { 'badge-success': signal==='buy_more', 'badge-danger': signal==='sell', 'badge-warning': signal==='trim', 'badge-secondary': signal==='hold' };
+    },
+    priorityClass(p) {
+      return { 'priority-high': p==='high', 'priority-medium': p==='medium', 'priority-low': p==='low' };
+    },
+  };
+}
+</script>
+{% endblock %}

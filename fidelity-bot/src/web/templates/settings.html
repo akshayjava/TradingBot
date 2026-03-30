@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<div x-data="settingsApp()" x-init="init()">
+
+  <div class="page-header">
+    <h2>Settings</h2>
+  </div>
+
+  <div x-show="msg" class="toast" :class="isError ? 'toast-error' : 'toast-success'" x-text="msg" x-transition></div>
+
+  <!-- Config form -->
+  <form @submit.prevent="save()">
+    <article>
+      <h3>API Keys &amp; Configuration</h3>
+      {% for f in fields %}
+      <label>
+        {{ f.label }}
+        <input
+          type="{% if f.secret %}password{% else %}text{% endif %}"
+          name="{{ f.key }}"
+          value="{{ f.value }}"
+          placeholder="{{ f.placeholder }}"
+          autocomplete="off"
+        >
+      </label>
+      {% endfor %}
+      <button type="submit" class="btn-primary" :disabled="saving">
+        <span x-show="!saving">💾 Save Settings</span>
+        <span x-show="saving">Saving…</span>
+      </button>
+    </article>
+  </form>
+
+  <!-- Alert channel tests -->
+  <article>
+    <h3>Test Alert Channels</h3>
+    <div class="btn-row">
+      <button @click="testSlack()" :disabled="testingSlack" class="btn-outline">
+        <span x-show="!testingSlack">💬 Test Slack</span>
+        <span x-show="testingSlack">Sending…</span>
+      </button>
+      <button @click="testEmail()" :disabled="testingEmail" class="btn-outline">
+        <span x-show="!testingEmail">✉️ Test Email</span>
+        <span x-show="testingEmail">Sending…</span>
+      </button>
+    </div>
+  </article>
+
+  <!-- Manual job trigger -->
+  <article>
+    <h3>Manual Triggers</h3>
+    <p class="muted">Run the full daily pipeline (fetch → research → optimise → digest) immediately.</p>
+    <button @click="runDigest()" :disabled="triggeringDigest" class="btn-outline">
+      <span x-show="!triggeringDigest">▶ Run Daily Job Now</span>
+      <span x-show="triggeringDigest">Running in background…</span>
+    </button>
+  </article>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/app.js"></script>
+<script>
+function settingsApp() {
+  return {
+    msg: '', isError: false,
+    saving: false, testingSlack: false, testingEmail: false, triggeringDigest: false,
+    init() {},
+    async save() {
+      this.saving = true;
+      const form = document.querySelector('form');
+      const data = new FormData(form);
+      try {
+        const r = await fetch('/api/settings', { method: 'POST', body: data });
+        const res = await r.json();
+        this.show(res.error ? res.error : '✓ Settings saved', !!res.error);
+      } catch(e) { this.show('Request failed: ' + e, true); }
+      finally { this.saving = false; }
+    },
+    async testSlack() {
+      this.testingSlack = true;
+      await this.post('/api/settings/test-slack', 'Slack test sent ✓', 'Slack test failed');
+      this.testingSlack = false;
+    },
+    async testEmail() {
+      this.testingEmail = true;
+      await this.post('/api/settings/test-email', 'Email test sent ✓', 'Email test failed');
+      this.testingEmail = false;
+    },
+    async runDigest() {
+      this.triggeringDigest = true;
+      await this.post('/api/settings/run-digest', 'Daily job started in background', 'Failed to start job');
+      setTimeout(() => this.triggeringDigest = false, 3000);
+    },
+    async post(url, successMsg, failMsg) {
+      try {
+        const r = await fetch(url, { method: 'POST' });
+        const res = await r.json();
+        this.show(res.error ? failMsg + ': ' + res.error : successMsg, !!res.error);
+      } catch(e) { this.show(failMsg + ': ' + e, true); }
+    },
+    show(msg, isError) {
+      this.msg = msg; this.isError = isError;
+      setTimeout(() => this.msg = '', 5000);
+    },
+  };
+}
+</script>
+{% endblock %}

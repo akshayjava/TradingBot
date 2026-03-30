@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Research{% endblock %}
+
+{% block content %}
+<div x-data="researchApp()" x-init="init()">
+
+  <div class="page-header">
+    <div>
+      <h2>Autonomous Research</h2>
+      <small class="muted">Karpathy-style: Plan → Research → Synthesise</small>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <article class="controls-card">
+    <div class="controls-row">
+      <label>
+        Tickers to research: <strong x-text="maxTickers"></strong>
+        <input type="range" min="1" max="10" x-model.number="maxTickers" style="width:160px">
+      </label>
+      <button @click="runResearch()" :disabled="running" class="btn-primary">
+        <span x-show="!running">▶ Run Research</span>
+        <span x-show="running">Running…</span>
+      </button>
+    </div>
+    <small class="muted">~{{ "3k–5k" }} tokens per ticker · approx $0.03–0.05 each at Opus 4.6 pricing</small>
+  </article>
+
+  <!-- Phase timeline (shown while running) -->
+  <div x-show="running || phases.some(p => p.status !== 'pending')" class="phase-timeline">
+    <template x-for="p in phases" :key="p.id">
+      <div class="phase-step" :class="p.status">
+        <span class="phase-dot"></span>
+        <span class="phase-label" x-text="p.label"></span>
+      </div>
+    </template>
+  </div>
+
+  <!-- Streaming output box (shown while running) -->
+  <div x-show="running">
+    <div class="stream-box" id="stream-output" x-ref="streamBox">
+      <pre x-text="streamText" class="stream-pre"></pre>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div x-show="errorMsg" class="toast toast-error" x-text="errorMsg"></div>
+
+  <!-- Results — latest stored report -->
+  <div id="report-area">
+    {% if latest_report %}
+    <div class="report-meta">
+      <strong>Last run:</strong> {{ latest_report.generated_at }} UTC &nbsp;·&nbsp;
+      Tickers: {{ latest_report.tickers_researched | join(", ") }} &nbsp;·&nbsp;
+      {{ latest_report.total_input_tokens | int | format_number }} input /
+      {{ latest_report.total_output_tokens | int | format_number }} output tokens
+    </div>
+    <div class="markdown-body" id="report-content">{{ latest_report.report_md }}</div>
+    {% else %}
+    <article class="callout-info" x-show="!running">
+      No research report yet. Click <strong>Run Research</strong> above to start.
+    </article>
+    {% endif %}
+  </div>
+
+  <!-- Live report div (appears after run completes) -->
+  <div id="live-report" style="display:none">
+    <div class="report-meta" id="live-meta"></div>
+    <div class="markdown-body" id="live-content"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="/static/app.js"></script>
+<script>
+function researchApp() {
+  return {
+    maxTickers: 5,
+    running: false,
+    streamText: '',
+    errorMsg: '',
+    phases: [
+      { id: 'planning',   label: '1. Planning research agenda', status: 'pending' },
+      { id: 'research',   label: '2. Researching tickers',      status: 'pending' },
+      { id: 'macro',      label: '3. Macro analysis',           status: 'pending' },
+      { id: 'synthesis',  label: '4. Synthesising report',      status: 'pending' },
+    ],
+    init() {},
+    setPhase(phase) {
+      this.phases.forEach(p => {
+        if (p.status === 'active') p.status = 'done';
+      });
+      if (phase === 'planning') {
+        this.phases[0].status = 'active';
+      } else if (phase.startsWith('ticker:')) {
+        this.phases[0].status = 'done';
+        this.phases[1].status = 'active';
+        this.phases[1].label = '2. Researching ' + phase.split(':')[1];
+      } else if (phase === 'macro') {
+        this.phases[1].status = 'done';
+        this.phases[2].status = 'active';
+      } else if (phase === 'synthesis') {
+        this.phases[2].status = 'done';
+        this.phases[3].status = 'active';
+      }
+    },
+    async runResearch() {
+      this.running = true;
+      this.streamText = '';
+      this.errorMsg = '';
+      this.phases.forEach(p => { p.status = 'pending'; p.label = p.label.replace(/ \(.*\)/, ''); });
+
+      const r = await fetch('/api/research?max_tickers=' + this.maxTickers, { method: 'POST' });
+      const { run_id, error } = await r.json();
+      if (error) { this.running = false; this.errorMsg = error; return; }
+
+      const self = this;
+      streamSSE('/api/research/stream/' + run_id, (evt) => {
+        if (evt.type === 'phase') {
+          self.setPhase(evt.phase);
+          self.streamText = '';  // clear text between phases
+        } else if (evt.type === 'token') {
+          self.streamText += evt.text;
+          // auto-scroll
+          const box = document.getElementById('stream-output');
+          if (box) box.scrollTop = box.scrollHeight;
+        } else if (evt.type === 'done') {
+          self.running = false;
+          self.phases.forEach(p => p.status = 'done');
+          // Render the markdown report
+          document.getElementById('report-area').style.display = 'none';
+          const liveReport = document.getElementById('live-report');
+          liveReport.style.display = 'block';
+          document.getElementById('live-meta').textContent =
+            'Just generated · Tickers: ' + evt.tickers.join(', ') +
+            ' · ' + evt.input_tokens.toLocaleString() + ' input / ' + evt.output_tokens.toLocaleString() + ' output tokens';
+          document.getElementById('live-content').innerHTML = marked.parse(evt.report_md || '');
+        } else if (evt.type === 'error') {
+          self.running = false;
+          self.errorMsg = 'Research failed: ' + evt.msg;
+        }
+      });
+    },
+  };
+}
+</script>
+{% endblock %}

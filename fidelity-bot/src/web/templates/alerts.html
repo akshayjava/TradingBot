@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h2>Alerts Log</h2>
+</div>
+
+<!-- Filter tabs -->
+<div class="tab-row">
+  <a href="/alerts" class="tab {% if not filter_type %}active{% endif %}">All</a>
+  <a href="/alerts?alert_type=drift_alert"  class="tab {% if filter_type=='drift_alert' %}active{% endif %}">Drift</a>
+  <a href="/alerts?alert_type=daily_loss"   class="tab {% if filter_type=='daily_loss' %}active{% endif %}">Loss</a>
+  <a href="/alerts?alert_type=daily_digest" class="tab {% if filter_type=='daily_digest' %}active{% endif %}">Digest</a>
+</div>
+
+{% if alerts %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Type</th>
+        <th>Ticker</th>
+        <th>Message</th>
+        <th>Sent via</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in alerts %}
+      <tr>
+        <td class="muted nowrap">{{ a.created_at[:19] }}</td>
+        <td><span class="badge badge-{{ a.badge_class }}">{{ a.label }}</span></td>
+        <td>{% if a.ticker %}<strong>{{ a.ticker }}</strong>{% else %}–{% endif %}</td>
+        <td class="msg-cell">
+          <details>
+            <summary>{{ (a.message or '')[:80] }}{% if (a.message or '')|length > 80 %}…{% endif %}</summary>
+            <pre class="msg-pre">{{ a.message }}</pre>
+          </details>
+        </td>
+        <td class="nowrap">
+          {% if a.slack %}<span title="Slack">💬</span>{% endif %}
+          {% if a.email %}<span title="Email">✉️</span>{% endif %}
+          {% if not a.slack and not a.email %}<span class="muted">–</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<article class="callout-info">No alerts logged yet.</article>
+{% endif %}
+{% endblock %}

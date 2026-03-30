@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Setup — Portfolio Bot</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.slate.min.css">
+  <link rel="stylesheet" href="/static/app.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="setup-body">
+<main class="setup-main" x-data="setupApp({{ step }})" x-init="init()">
+
+  <div class="setup-card">
+    <div class="setup-header">
+      <h1>📈 Portfolio Bot Setup</h1>
+      <p>Connect your Fidelity account and configure Claude AI in 3 steps.</p>
+    </div>
+
+    <!-- Step indicator -->
+    <div class="step-indicator">
+      <div class="step-dot" :class="currentStep >= 1 ? 'done' : ''">1</div>
+      <div class="step-line" :class="currentStep >= 2 ? 'done' : ''"></div>
+      <div class="step-dot" :class="currentStep >= 2 ? (currentStep > 2 ? 'done' : 'active') : ''">2</div>
+      <div class="step-line" :class="currentStep >= 3 ? 'done' : ''"></div>
+      <div class="step-dot" :class="currentStep >= 3 ? 'active' : ''">3</div>
+    </div>
+
+    <!-- Step 1: API Keys -->
+    <div x-show="currentStep === 1">
+      <h3>Step 1 — API Keys</h3>
+      <p class="muted">Get your Plaid credentials at <a href="https://dashboard.plaid.com" target="_blank">dashboard.plaid.com</a> (free)
+        and your Anthropic key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>.</p>
+
+      <label>Plaid Client ID <span class="required">*</span>
+        <input type="text" x-model="plaidClientId" placeholder="your_client_id" autocomplete="off">
+      </label>
+      <label>Plaid Secret <span class="required">*</span>
+        <input type="password" x-model="plaidSecret" placeholder="your_secret" autocomplete="off">
+      </label>
+      <label>Plaid Environment
+        <select x-model="plaidEnv">
+          <option value="sandbox">sandbox (test data)</option>
+          <option value="development">development (real, ≤100 items, free)</option>
+          <option value="production">production (real, paid)</option>
+        </select>
+      </label>
+      <label>Anthropic API Key <span class="required">*</span>
+        <input type="password" x-model="anthropicKey" placeholder="sk-ant-…" autocomplete="off">
+      </label>
+
+      <div x-show="step1Error" class="toast toast-error" x-text="step1Error"></div>
+
+      <button @click="saveKeys()" :disabled="savingKeys" class="btn-primary full-width">
+        <span x-show="!savingKeys">Next: Connect Fidelity →</span>
+        <span x-show="savingKeys">Saving…</span>
+      </button>
+    </div>
+
+    <!-- Step 2: Plaid Link -->
+    <div x-show="currentStep === 2">
+      <h3>Step 2 — Connect Fidelity Account</h3>
+      <p class="muted">Click the button below. A Plaid window will open — search for <strong>Fidelity</strong> and log in.</p>
+      <p class="muted">If you prefer to connect manually, enter your access token directly:</p>
+
+      <label>Paste access token directly (optional)
+        <input type="password" x-model="manualToken" placeholder="access-sandbox-xxxx-…" autocomplete="off">
+      </label>
+
+      <div x-show="plaidError" class="toast toast-error" x-text="plaidError"></div>
+      <div x-show="plaidSuccess" class="toast toast-success">✓ Account connected!</div>
+
+      <div class="btn-row">
+        <button @click="launchPlaidLink()" :disabled="linking" class="btn-primary">
+          <span x-show="!linking">🔗 Launch Plaid Link</span>
+          <span x-show="linking">Opening…</span>
+        </button>
+        <button @click="saveManualToken()" :disabled="!manualToken || savingToken" class="btn-outline">
+          <span x-show="!savingToken">Save Token</span>
+          <span x-show="savingToken">Saving…</span>
+        </button>
+      </div>
+      <br>
+      <button @click="currentStep = 3" class="btn-link">Skip for now →</button>
+    </div>
+
+    <!-- Step 3: Optional channels + done -->
+    <div x-show="currentStep === 3">
+      <h3>Step 3 — Alert Channels (optional)</h3>
+      <p class="muted">Leave blank to skip. You can configure these later in Settings.</p>
+
+      <label>Slack Bot Token
+        <input type="password" x-model="slackToken" placeholder="xoxb-…" autocomplete="off">
+      </label>
+      <label>Slack Channel
+        <input type="text" x-model="slackChannel" placeholder="#portfolio-alerts">
+      </label>
+      <label>Resend API Key (email)
+        <input type="password" x-model="resendKey" placeholder="re_…" autocomplete="off">
+      </label>
+      <label>Email From
+        <input type="text" x-model="emailFrom" placeholder="bot@yourdomain.com">
+      </label>
+      <label>Email To
+        <input type="text" x-model="emailTo" placeholder="you@yourdomain.com">
+      </label>
+
+      <div x-show="step3Error" class="toast toast-error" x-text="step3Error"></div>
+
+      <button @click="finish()" :disabled="finishing" class="btn-primary full-width">
+        <span x-show="!finishing">✓ Finish Setup</span>
+        <span x-show="finishing">Saving…</span>
+      </button>
+    </div>
+
+  </div><!-- /setup-card -->
+</main>
+
+<script src="/static/app.js"></script>
+<script>
+function setupApp(initialStep) {
+  return {
+    currentStep: initialStep || 1,
+    // Step 1
+    plaidClientId: '', plaidSecret: '', plaidEnv: 'sandbox', anthropicKey: '',
+    savingKeys: false, step1Error: '',
+    // Step 2
+    manualToken: '', linking: false, savingToken: false,
+    plaidError: '', plaidSuccess: false,
+    // Step 3
+    slackToken: '', slackChannel: '#portfolio-alerts', resendKey: '', emailFrom: '', emailTo: '',
+    finishing: false, step3Error: '',
+
+    init() {},
+
+    async saveKeys() {
+      this.savingKeys = true; this.step1Error = '';
+      const data = new FormData();
+      data.append('PLAID_CLIENT_ID', this.plaidClientId);
+      data.append('PLAID_SECRET', this.plaidSecret);
+      data.append('PLAID_ENV', this.plaidEnv);
+      data.append('ANTHROPIC_API_KEY', this.anthropicKey);
+      try {
+        const r = await fetch('/api/setup/keys', { method: 'POST', body: data });
+        const res = await r.json();
+        if (res.error) { this.step1Error = res.error; }
+        else { this.currentStep = 2; }
+      } catch(e) { this.step1Error = 'Request failed: ' + e; }
+      finally { this.savingKeys = false; }
+    },
+
+    async launchPlaidLink() {
+      this.linking = true; this.plaidError = '';
+      try {
+        const r = await fetch('/api/setup/plaid-link-token', { method: 'POST' });
+        const res = await r.json();
+        if (res.error) { this.plaidError = res.error; this.linking = false; return; }
+        // Open Plaid Link in a new window (requires Plaid Link JS to be loaded)
+        // For simplicity, show the token for manual use
+        this.manualToken = '';
+        alert('Link token generated: ' + res.link_token + '\n\nUse this with the Plaid Link SDK or the Plaid Quickstart to get your access_token, then paste it below.');
+      } catch(e) { this.plaidError = 'Failed: ' + e; }
+      finally { this.linking = false; }
+    },
+
+    async saveManualToken() {
+      this.savingToken = true; this.plaidError = '';
+      try {
+        const r = await fetch('/api/setup/plaid-exchange', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ public_token: this.manualToken }),
+        });
+        const res = await r.json();
+        if (res.error) {
+          // Maybe it's already an access token, not a public token
+          // Try saving it directly via settings
+          const data = new FormData();
+          data.append('PLAID_ACCESS_TOKENS', this.manualToken);
+          const r2 = await fetch('/api/settings', { method: 'POST', body: data });
+          const res2 = await r2.json();
+          if (res2.error) { this.plaidError = res.error; }
+          else { this.plaidSuccess = true; setTimeout(() => this.currentStep = 3, 1200); }
+        } else {
+          this.plaidSuccess = true;
+          setTimeout(() => this.currentStep = 3, 1200);
+        }
+      } catch(e) { this.plaidError = 'Failed: ' + e; }
+      finally { this.savingToken = false; }
+    },
+
+    async finish() {
+      this.finishing = true; this.step3Error = '';
+      const data = new FormData();
+      if (this.slackToken) data.append('SLACK_BOT_TOKEN', this.slackToken);
+      if (this.slackChannel) data.append('SLACK_CHANNEL', this.slackChannel);
+      if (this.resendKey) data.append('RESEND_API_KEY', this.resendKey);
+      if (this.emailFrom) data.append('EMAIL_FROM', this.emailFrom);
+      if (this.emailTo) data.append('EMAIL_TO', this.emailTo);
+      try {
+        if ([...data.keys()].length > 0) {
+          await fetch('/api/settings', { method: 'POST', body: data });
+        }
+        window.location.href = '/';
+      } catch(e) { this.step3Error = 'Failed: ' + e; }
+      finally { this.finishing = false; }
+    },
+  };
+}
+</script>
+</body>
+</html>

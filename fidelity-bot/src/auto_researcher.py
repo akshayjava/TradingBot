@@ -22,6 +22,7 @@ data tool and pass results as additional context.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -249,8 +250,14 @@ class AutoResearcher:
         user_message: str,
         max_tokens: int = 4096,
         use_thinking: bool = True,
+        on_token: Callable[[str], None] | None = None,
     ) -> tuple[str, str | None]:
-        """Make a single Claude call. Returns (text, thinking)."""
+        """Make a single Claude call. Returns (text, thinking).
+
+        Args:
+            on_token: Optional callback called with each text token as it streams.
+                      Used by the web UI to push tokens to the browser via SSE.
+        """
         kwargs: dict[str, Any] = {
             "model": MODEL,
             "max_tokens": max_tokens,
@@ -270,6 +277,8 @@ class AutoResearcher:
                         thinking += event.delta.thinking
                     elif event.delta.type == "text_delta":
                         text += event.delta.text
+                        if on_token:
+                            on_token(event.delta.text)
 
             final = stream.get_final_message()
             self._total_in += final.usage.input_tokens
@@ -318,13 +327,20 @@ class AutoResearcher:
 
     # ── Phase 1: Plan ─────────────────────────────────────────────────────────
 
-    def _plan_research(self, snapshot: dict, max_tickers: int) -> dict:
+    def _plan_research(
+        self,
+        snapshot: dict,
+        max_tickers: int,
+        on_token: Callable[[str], None] | None = None,
+    ) -> dict:
         """Ask Claude which tickers to research and what questions to ask."""
         prompt = _PLAN_PROMPT.format(
             max_tickers=max_tickers,
             snapshot_json=json.dumps(snapshot, indent=2),
         )
-        text, _ = self._call(_PLAN_SYSTEM, prompt, max_tokens=2048, use_thinking=True)
+        text, _ = self._call(
+            _PLAN_SYSTEM, prompt, max_tokens=2048, use_thinking=True, on_token=on_token
+        )
         return self._parse_json(text)
 
     # ── Phase 2: Research ─────────────────────────────────────────────────────
@@ -333,6 +349,7 @@ class AutoResearcher:
         self,
         ticker_plan: dict,
         snapshot: dict,
+        on_token: Callable[[str], None] | None = None,
     ) -> TickerResearch:
         """Deep-dive on a single ticker, answering its planned questions."""
         ticker = ticker_plan["ticker"]
@@ -366,7 +383,9 @@ class AutoResearcher:
             questions_list=questions_list,
         )
 
-        text, thinking = self._call(_RESEARCH_SYSTEM, prompt, max_tokens=3072, use_thinking=True)
+        text, thinking = self._call(
+            _RESEARCH_SYSTEM, prompt, max_tokens=3072, use_thinking=True, on_token=on_token
+        )
 
         try:
             data = self._parse_json(text)
@@ -396,14 +415,21 @@ class AutoResearcher:
             thinking=thinking,
         )
 
-    def _research_macro(self, macro_questions: list[str], snapshot: dict) -> MacroResearch:
+    def _research_macro(
+        self,
+        macro_questions: list[str],
+        snapshot: dict,
+        on_token: Callable[[str], None] | None = None,
+    ) -> MacroResearch:
         """Answer cross-portfolio macro questions."""
         questions_list = "\n".join(f"{i+1}. {q}" for i, q in enumerate(macro_questions))
         prompt = _MACRO_RESEARCH_PROMPT.format(
             snapshot_json=json.dumps(snapshot, indent=2),
             questions_list=questions_list,
         )
-        text, thinking = self._call(_RESEARCH_SYSTEM, prompt, max_tokens=2048, use_thinking=True)
+        text, thinking = self._call(
+            _RESEARCH_SYSTEM, prompt, max_tokens=2048, use_thinking=True, on_token=on_token
+        )
 
         try:
             data = self._parse_json(text)
@@ -430,6 +456,7 @@ class AutoResearcher:
         ticker_research: dict[str, TickerResearch],
         macro_research: MacroResearch,
         snapshot: dict,
+        on_token: Callable[[str], None] | None = None,
     ) -> dict:
         """Integrate all findings into a final portfolio-level report."""
         # Compact representation of per-ticker findings
@@ -461,7 +488,9 @@ class AutoResearcher:
             macro_research_json=macro_json,
             snapshot_json=json.dumps(snapshot, indent=2),
         )
-        text, _ = self._call(_SYNTHESIS_SYSTEM, prompt, max_tokens=3072, use_thinking=True)
+        text, _ = self._call(
+            _SYNTHESIS_SYSTEM, prompt, max_tokens=3072, use_thinking=True, on_token=on_token
+        )
 
         try:
             return self._parse_json(text)
@@ -476,7 +505,12 @@ class AutoResearcher:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def conduct_research(self, max_tickers: int = 5) -> ResearchReport:
+    def conduct_research(
+        self,
+        max_tickers: int = 5,
+        on_phase: Callable[[str], None] | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> ResearchReport:
         """Run the full three-phase research loop on the latest portfolio snapshot.
 
         Args:
@@ -496,22 +530,30 @@ class AutoResearcher:
         snapshot = self._truncate_snapshot(snapshot)
 
         # ── Phase 1: Plan ──────────────────────────────────────────────────────
-        plan = self._plan_research(snapshot, max_tickers=max_tickers)
+        if on_phase:
+            on_phase("planning")
+        plan = self._plan_research(snapshot, max_tickers=max_tickers, on_token=on_token)
         priority_tickers: list[dict] = plan.get("priority_tickers", [])
         macro_questions: list[str] = plan.get("macro_questions", [])
 
         # ── Phase 2: Research ──────────────────────────────────────────────────
         ticker_research: dict[str, TickerResearch] = {}
         for ticker_plan in priority_tickers:
-            research = self._research_ticker(ticker_plan, snapshot)
+            if on_phase:
+                on_phase(f"ticker:{ticker_plan.get('ticker', '?')}")
+            research = self._research_ticker(ticker_plan, snapshot, on_token=on_token)
             ticker_research[research.ticker] = research
 
-        macro_research = self._research_macro(macro_questions, snapshot) if macro_questions else MacroResearch(
+        if on_phase:
+            on_phase("macro")
+        macro_research = self._research_macro(macro_questions, snapshot, on_token=on_token) if macro_questions else MacroResearch(
             question_answers=[], portfolio_themes=[], macro_tailwinds=[], macro_headwinds=[]
         )
 
         # ── Phase 3: Synthesise ────────────────────────────────────────────────
-        synthesis = self._synthesize(ticker_research, macro_research, snapshot)
+        if on_phase:
+            on_phase("synthesis")
+        synthesis = self._synthesize(ticker_research, macro_research, snapshot, on_token=on_token)
 
         rebalancing_actions = [
             RebalancingAction(
