@@ -16,24 +16,27 @@ MODEL = "claude-opus-4-6"
 
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
-_SYSTEM_PROMPT = """You are an expert portfolio analyst and financial advisor assistant.
-You have access to real-time Fidelity brokerage data pulled via Plaid.
+_SYSTEM_PROMPT = """You are an aggressive, gains-focused portfolio analyst with access to
+real-time Fidelity brokerage data pulled via Plaid.
+
+Primary objective: **maximise portfolio gains**.
+
 Your role is to:
-1. Analyse portfolio composition, concentration risk, and performance
-2. Identify actionable rebalancing opportunities and risk factors
-3. Flag anomalies such as unusual transactions, large single-day moves, or high drift
-4. Provide concise, actionable summaries suitable for a daily digest alert
+1. Identify highest-conviction opportunities to grow portfolio value
+2. Flag under-performing positions that are dragging on returns
+3. Detect concentration risk that limits upside (not just protects downside)
+4. Provide actionable, specific recommendations with clear expected-gain rationale
 
 Guidelines:
-- Be specific: cite tickers, dollar amounts, and percentages
-- Prioritise by materiality (largest positions, biggest changes)
-- Flag any single position that is >20 % of the total portfolio
-- Be conservative in recommendations — never suggest specific trades unless analysing drift
-- Format your response with clear sections using markdown headings
-- Keep the daily digest under 500 words unless the user explicitly asks for more detail
+- Lead with the biggest gain opportunities first, not just the biggest positions
+- Cite tickers, dollar amounts, percentages, and expected return impact
+- Call out lagging positions explicitly — dead weight costs opportunity
+- Flag any single position >20 % that is underperforming the rest of portfolio
+- Format with clear markdown headings
+- Daily digest: under 600 words; be direct and actionable
 """
 
-_DAILY_DIGEST_PROMPT = """Analyse the following portfolio snapshot and provide a daily digest.
+_DAILY_DIGEST_PROMPT = """Analyse the following portfolio snapshot and provide a gains-focused daily digest.
 
 **Portfolio Snapshot (fetched {fetched_at}):**
 {snapshot_json}
@@ -42,14 +45,14 @@ _DAILY_DIGEST_PROMPT = """Analyse the following portfolio snapshot and provide a
 {prev_snapshot_json}
 
 Please provide:
-1. **Portfolio Summary** – total value, account breakdown, top 5 positions
-2. **Performance vs Prior Day** – value change, biggest movers (up and down)
-3. **Concentration Risk** – any positions >10 % of portfolio; diversification comment
-4. **Rebalancing Signals** – positions that have drifted significantly from prior snapshot
-5. **Recent Transactions** – notable buys/sells/dividends in the last 30 days
-6. **Action Items** – up to 3 specific, prioritised recommendations
+1. **Performance vs Prior Day** – total value change ($, %), biggest winners and losers
+2. **Gain Momentum** – which positions are accelerating vs decelerating returns
+3. **Dead Weight** – positions with negative or flat returns dragging on portfolio gains
+4. **Top Opportunities** – positions or sectors with the highest upside from here
+5. **Recent Transactions** – notable buys/sells/dividends; assess if they were gains-optimal
+6. **Action Items** – up to 3 specific, prioritised moves to maximise portfolio gains
 
-Keep the response concise and actionable.
+Be direct: name the tickers, give the numbers, explain the gain impact.
 """
 
 _QUERY_PROMPT = """You are a financial assistant with access to this portfolio data.
@@ -88,6 +91,34 @@ Respond with a JSON object in this exact format:
   ],
   "summary": "one-sentence summary"
 }}
+"""
+
+
+_RESEARCH_DIGEST_PROMPT = """You are synthesising two sources of information into a single gains-focused
+portfolio action plan.
+
+**Source 1 — Live Portfolio Snapshot (fetched {fetched_at}):**
+{snapshot_json}
+
+**Source 2 — Previous Snapshot:**
+{prev_snapshot_json}
+
+**Source 3 — Auto-Research Report (fundamental + macro analysis):**
+{research_report}
+
+Your task: produce a unified **Gains-Optimised Daily Brief** that:
+
+1. **Performance Summary** — today's P&L, best/worst movers
+2. **Research-Backed Signals** — for each researched ticker, what does the
+   combined price action + fundamental research say?  Is the current weight
+   appropriate given the gain outlook?
+3. **Top 3 Rebalancing Moves** — specific ticker, direction (buy/trim/sell),
+   estimated gain impact, and urgency
+4. **Macro Tailwinds / Headwinds** — from the research report, which macro
+   factors are most relevant to today's portfolio gains?
+5. **Watch List** — 2–3 unresearched positions that warrant attention next
+
+Be specific, gains-first, and keep the total under 700 words.
 """
 
 
@@ -268,6 +299,33 @@ class PortfolioAnalyzer:
                 summary="Could not parse drift analysis response.",
                 raw_content=result.content,
             )
+
+    def research_digest(self, research_report_md: str) -> AnalysisResult:
+        """Generate a digest that incorporates auto-research findings.
+
+        Takes the markdown output from AutoResearcher.format_report_markdown()
+        and synthesises it with the latest snapshot into a unified, gains-focused
+        daily digest.
+        """
+        snapshots = self._store.get_snapshot_payloads(limit=2)
+        if not snapshots:
+            return AnalysisResult(
+                content="No portfolio data available. Run `portfolio-bot fetch` first.",
+                model=MODEL,
+                input_tokens=0,
+                output_tokens=0,
+            )
+
+        current = self._truncate_snapshot(snapshots[0])
+        previous = self._truncate_snapshot(snapshots[1]) if len(snapshots) > 1 else {}
+
+        prompt = _RESEARCH_DIGEST_PROMPT.format(
+            fetched_at=current.get("fetched_at", "unknown"),
+            snapshot_json=json.dumps(current, indent=2),
+            prev_snapshot_json=json.dumps(previous, indent=2) if previous else "N/A",
+            research_report=research_report_md,
+        )
+        return self._call_claude(prompt, max_tokens=5120)
 
     def check_daily_loss(self) -> tuple[bool, str]:
         """

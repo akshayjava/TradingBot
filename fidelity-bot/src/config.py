@@ -50,6 +50,10 @@ class Config:
     scheduler_cron_hour: int
     scheduler_cron_minute: int
 
+    # ── Auto-Research ──────────────────────────────────────────────────────────
+    research_max_tickers: int        # max tickers to research per run
+    research_enabled: bool           # run auto-research in daily scheduler job
+
     @classmethod
     def from_env(cls) -> "Config":
         raw_tokens = _optional("PLAID_ACCESS_TOKENS", "")
@@ -72,6 +76,8 @@ class Config:
             alert_daily_loss_threshold=float(_optional("ALERT_DAILY_LOSS_THRESHOLD", "0.02")),
             scheduler_cron_hour=int(_optional("SCHEDULER_CRON_HOUR", "18")),
             scheduler_cron_minute=int(_optional("SCHEDULER_CRON_MINUTE", "0")),
+            research_max_tickers=int(_optional("RESEARCH_MAX_TICKERS", "5")),
+            research_enabled=_optional("RESEARCH_ENABLED", "true").lower() == "true",
         )
 
     @property

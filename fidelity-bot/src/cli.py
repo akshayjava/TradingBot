@@ -256,6 +256,120 @@ def link():
     )
 
 
+# ── research ──────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--max-tickers", default=5, show_default=True,
+              help="Number of top positions to research in depth.")
+@click.option("--send/--no-send", default=False, help="Send research report via Slack/email.")
+@click.option("--show-thinking/--no-show-thinking", default=False,
+              help="Print Claude's thinking for each research phase.")
+def research(max_tickers: int, send: bool, show_thinking: bool):
+    """Run Karpathy-style autonomous research on your top positions.
+
+    Runs a three-phase loop:
+      1. Plan  — Claude builds a prioritised research agenda
+      2. Research — deep per-ticker + macro analysis
+      3. Synthesise — integrates findings into gains-focused signals
+    """
+    from src.auto_researcher import AutoResearcher
+    from src.analyzer import PortfolioAnalyzer
+    from src.alerter import Alerter
+
+    cfg, store, _, _ = _make_deps()
+    researcher = AutoResearcher(cfg, store)
+
+    with console.status(f"[bold green]Running auto-research ({max_tickers} tickers)…"):
+        report = researcher.conduct_research(max_tickers=max_tickers)
+
+    # Show per-ticker thinking if requested
+    if show_thinking:
+        for ticker, r in report.ticker_research.items():
+            if r.thinking:
+                console.print(
+                    Panel(r.thinking, title=f"[dim]Thinking: {ticker}[/dim]", border_style="dim")
+                )
+
+    report_md = researcher.format_report_markdown(report)
+    console.print(Panel(Markdown(report_md), title="Research Report", border_style="cyan"))
+
+    # Show optimisation alongside research
+    console.print("\n[bold]Generating gains-optimised allocation…[/bold]")
+    with console.status("[bold green]Optimising portfolio…"):
+        from src.optimizer import PortfolioOptimizer
+        optimizer = PortfolioOptimizer(store)
+        opt_result = optimizer.optimize(research_report=report)
+
+    opt_md = optimizer.format_result_markdown(opt_result)
+    console.print(Panel(Markdown(opt_md), title="Gains Optimisation", border_style="green"))
+
+    # Synthesise into a research digest via Claude
+    console.print("\n[bold]Synthesising research digest…[/bold]")
+    analyzer = PortfolioAnalyzer(cfg, store)
+    with console.status("[bold green]Generating research digest…"):
+        digest = analyzer.research_digest(report_md + "\n\n" + opt_md)
+
+    console.print(Panel(Markdown(digest.content), title="Research-Backed Digest", border_style="magenta"))
+    console.print(
+        f"\n[dim]Research tokens — input: {report.total_input_tokens:,}  "
+        f"output: {report.total_output_tokens:,}\n"
+        f"Digest tokens — input: {digest.input_tokens:,}  output: {digest.output_tokens:,}[/dim]"
+    )
+
+    if send:
+        alerter = Alerter(cfg, store)
+        delivered = alerter.send_daily_digest(digest.content)
+        console.print(f"[green]Research digest sent via: {delivered}[/green]")
+
+
+# ── optimize ──────────────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--max-position", default=0.30, show_default=True,
+              help="Max allocation for any single position (0.30 = 30%).")
+@click.option("--kelly-fraction", default=0.50, show_default=True,
+              help="Partial-Kelly scaling factor (0.5 = half Kelly).")
+@click.option("--with-research/--no-research", default=False,
+              help="Run auto-research first to overlay signals on optimisation.")
+@click.option("--max-tickers", default=5, show_default=True,
+              help="Tickers to research when --with-research is set.")
+def optimize(max_position: float, kelly_fraction: float, with_research: bool, max_tickers: int):
+    """Compute gains-maximising portfolio weights using Kelly criterion + momentum.
+
+    Objective: maximise expected portfolio gains subject to concentration limits.
+    Uses historical snapshot data for return/volatility estimates.  Pass
+    --with-research to layer in Claude's fundamental analysis signals.
+    """
+    from src.optimizer import PortfolioOptimizer
+
+    cfg, store, _, _ = _make_deps()
+
+    research_report = None
+    if with_research:
+        from src.auto_researcher import AutoResearcher
+        with console.status(f"[bold green]Running auto-research ({max_tickers} tickers)…"):
+            researcher = AutoResearcher(cfg, store)
+            research_report = researcher.conduct_research(max_tickers=max_tickers)
+        console.print(
+            f"[dim]Research done — {len(research_report.tickers_researched)} tickers, "
+            f"{research_report.total_input_tokens:,} input tokens[/dim]"
+        )
+
+    optimizer = PortfolioOptimizer(
+        store,
+        max_position_pct=max_position,
+        kelly_fraction=kelly_fraction,
+    )
+
+    with console.status("[bold green]Optimising portfolio…"):
+        result = optimizer.optimize(research_report=research_report)
+
+    console.print(Markdown(optimizer.format_result_markdown(result)))
+
+    if result.data_quality_note:
+        console.print(f"\n[yellow]Note:[/yellow] {result.data_quality_note}")
+
+
 # ── alerts-log ────────────────────────────────────────────────────────────────
 
 @cli.command("alerts-log")
